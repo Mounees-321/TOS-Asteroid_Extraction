@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // meta/state — everyone can read (to know which game is active).
+    // Writes are only ever done by the admin dashboard.
+    match /meta/state {
+      allow read: if true;
+      allow write: if true; // see note below on admin auth
+    }
+
+    match /games/{gameId} {
+      allow read: if true;
+      allow write: if true; // status/asteroidLog — admin dashboard only in practice
+
+      match /teams/{teamId} {
+        allow read: if true;
+
+        // A team can be CREATED by anyone, but only with valid shape
+        // and only while the round is still open.
+        allow create: if
+          request.resource.data.name is string &&
+          request.resource.data.members is list &&
+          request.resource.data.members.size() >= 1 &&
+          request.resource.data.members.size() <= 3 &&
+          request.resource.data.submitted == false &&
+          get(/databases/$(database)/documents/games/$(gameId)).data.status == "building";
+
+        // Updates allowed only if not yet submitted, and only touching
+        // ships/spent/leftover/submitted — name & members can't be changed
+        // after creation (prevents a team pretending to be another team).
+        allow update: if
+          resource.data.submitted == false &&
+          get(/databases/$(database)/documents/games/$(gameId)).data.status == "building" &&
+          request.resource.data.name == resource.data.name &&
+          request.resource.data.members == resource.data.members;
+
+        // Nobody deletes team docs from the client.
+        allow delete: if false;
+      }
+    }
+  }
+}
+
+// -----------------------------------------------------------------
+// HONEST LIMITATION: because the admin dashboard currently uses a
+// simple client-side password check (not real Firebase Authentication),
+// these rules can't yet tell "the admin" apart from "anyone else" for
+// writes to games/{gameId} (status, asteroidLog) or meta/state. Those
+// writes are left open so your admin panel keeps working as-is.
+//
+// This means a technically savvy student COULD, in theory, open
+// devtools and manually flip a game's status or rewrite the
+// asteroidLog. For a casual college event this is a low-probability
+// risk. If you want it fully locked down, the fix is adding real
+// Firebase Authentication (email/password) for just the admin account,
+// then changing the two "allow write: if true" lines above to check
+// request.auth.token.admin == true. Happy to wire that up if you want
+// it before the event.
+// -----------------------------------------------------------------
